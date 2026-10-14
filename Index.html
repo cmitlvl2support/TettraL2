@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('style') ?> 
+</head>
+<body>
+
+  <div class="app-container">
+    
+    <!-- LEFT SIDEBAR -->
+    <aside>
+      <div class="sidebar-header">
+        <span class="logo">📐 Tettra L2</span>
+        <button onclick="showEditor()" class="btn-new">+ New Page</button>
+      </div>
+      
+      <div class="search-box">
+        <input type="text" id="searchBar" class="search-input" onkeyup="filterArticles()" placeholder="Search wiki...">
+      </div>
+
+      <nav id="articleList">
+        <p style="font-size:14px; color:#94a3b8; font-style:italic; padding:8px;" id="loadingPlaceholder">Loading internal docs...</p>
+      </nav>
+    </aside>
+
+    <!-- RIGHT DASHBOARD WORKSPACE -->
+    <main>
+      <div class="content-wrapper">
+        
+        <!-- Action Toast Status -->
+        <div id="toast" class="hidden toast"></div>
+
+        <!-- READ VIEW COMPONENT -->
+        <article id="viewPanel" class="card">
+          <div class="header-flex">
+            <div>
+              <span id="viewCategory" class="view-cat"></span>
+              <h2 id="viewTitle">Welcome to your Team Wiki</h2>
+            </div>
+            <button id="editBtn" onclick="editCurrentArticle()" class="hidden btn-edit">Edit page</button>
+          </div>
+          <div id="viewContent" class="view-text">Select an article from the left navigation tree bar or click "+ New Page" to deploy and record tribal company knowledge.</div>
+        </article>
+
+        <!-- WRITE EDITOR COMPONENT -->
+        <section id="editPanel" class="card hidden">
+          <div class="editor-title">Write Article</div>
+          <input type="hidden" id="editId">
+          
+          <div class="form-group">
+            <label>Article Title</label>
+            <input type="text" id="editTitle" placeholder="e.g., How to Request PTO">
+          </div>
+          
+          <div class="form-group">
+            <label>Category / Folder</label>
+            <input type="text" id="editCategory" placeholder="e.g., HR, Engineering, Admin">
+          </div>
+          
+          <div class="form-group">
+            <label>Body Content Docs</label>
+            <!-- Rich Text Formatting Toolbar -->
+            <div class="editor-toolbar">
+              <button type="button" class="toolbar-btn" onclick="execCmd('bold')" title="Bold"><b>B</b></button>
+              <button type="button" class="toolbar-btn" onclick="execCmd('italic')" title="Italic"><i>I</i></button>
+              <button type="button" class="toolbar-btn" onclick="execCmd('underline')" title="Underline"><u>U</u></button>
+              <button type="button" class="toolbar-btn" onclick="execCmd('strikeThrough')" title="Strikethrough"><s>S</s></button>
+              <button type="button" class="toolbar-btn" onclick="execCmd('formatBlock', '<h2>')" title="Heading 2">H2</button>
+              <button type="button" class="toolbar-btn" onclick="execCmd('formatBlock', '<h3>')" title="Heading 3">H3</button>
+              <button type="button" class="toolbar-btn" onclick="execCmd('insertUnorderedList')" title="Bullet List">• List</button>
+              <button type="button" class="toolbar-btn" onclick="execCmd('insertOrderedList')" title="Numbered List">1. List</button>
+              
+              <!-- Image Options -->
+              <label class="toolbar-btn file-input-btn" title="Upload Image File">
+                📷 Upload Image
+                <input type="file" accept="image/*" onchange="uploadImageFile(this)">
+              </label>
+              <button type="button" class="toolbar-btn" onclick="insertImageUrl()" title="Insert Image Link">🔗 Image URL</button>
+              
+              <button type="button" class="toolbar-btn" onclick="execCmd('removeFormat')" title="Clear Formatting">🧹 Clear</button>
+            </div>
+            
+            <!-- Rich Text Editable Container -->
+            <div id="editContent" class="rich-editor" contenteditable="true" placeholder="Write steps here... You can paste screenshots directly using Ctrl+V!"></div>
+          </div>
+          
+          <div class="btn-flex">
+            <button onclick="submitArticle()" class="btn-save">Save & Publish</button>
+            <button onclick="cancelEdit()" class="btn-cancel">Cancel</button>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <script>
+    let allArticles = [];
+    let currentArticleId = null;
+
+    window.onload = function() {
+      loadWikiData();
+      setupPasteAndDrop();
+    };
+
+    function execCmd(command, value = null) {
+      document.execCommand(command, false, value);
+    }
+
+    function insertImageUrl() {
+      const url = prompt("Enter image URL:");
+      if (url) execCmd('insertImage', url);
+    }
+
+    function uploadImageFile(input) {
+      if (input.files && input.files[0]) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          execCmd('insertImage', e.target.result);
+        };
+        reader.readAsDataURL(input.files[0]);
+      }
+    }
+
+    function setupPasteAndDrop() {
+      const editor = document.getElementById('editContent');
+      editor.addEventListener('paste', function(e) {
+        const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+        for (let item of items) {
+          if (item.type.indexOf('image') === 0) {
+            e.preventDefault();
+            const blob = item.getAsFile();
+            const reader = new FileReader();
+            reader.onload = function(event) {
+              execCmd('insertImage', event.target.result);
+            };
+            reader.readAsDataURL(blob);
+          }
+        }
+      });
+    }
+
+    function loadWikiData() {
+      document.getElementById('loadingPlaceholder').innerText = "Loading internal docs...";
+      google.script.run
+        .withSuccessHandler(function(articles) {
+          if (articles && articles.error) {
+            document.getElementById('loadingPlaceholder').innerHTML = `<span class="error-text">Sheet Read Error: ${articles.error}</span>`;
+            return;
+          }
+          allArticles = articles || [];
+          renderSidebar(allArticles);
+        })
+        .withFailureHandler(function(err) {
+          document.getElementById('loadingPlaceholder').innerHTML = `<span class="error-text">Connection Failed: ${err.message}</span>`;
+        })
+        .getArticles();
+    }
+
+    // Render grouped folders inside the sidebar cleanly
+    function renderSidebar(articles) {
+      const listContainer = document.getElementById('articleList');
+      if (!articles || articles.length === 0) {
+        listContainer.innerHTML = '<p style="font-size:14px; color:#94a3b8; font-style:italic; padding:8px;">No pages found yet.</p>';
+        return;
+      }
+      
+      // Group articles by Category
+      const grouped = {};
+      articles.forEach(art => {
+        const cat = (art.category && art.category.trim()) ? art.category.trim() : 'GENERAL';
+        if (!grouped[cat]) grouped[cat] = [];
+        grouped[cat].push(art);
+      });
+
+      let html = '';
+      let index = 0;
+      for (const [category, items] of Object.entries(grouped)) {
+        const folderId = 'folder_' + index++;
+        html += `
+          <div class="category-folder">
+            <button class="folder-header" onclick="toggleFolder('${folderId}')">
+              <span>📁 ${category}</span>
+              <span id="${folderId}_icon">▼ (${items.length})</span>
+            </button>
+            <div id="${folderId}" class="folder-content">
+              ${items.map(art => {
+                // Remove <img> tags and Base64 strings, strip HTML tags, and clean up newlines for safe attributes
+                const cleanContent = (art.content || '')
+                  .replace(/<img[^>]*>/gi, '') 
+                  .replace(/<[^>]*>?/gm, '')
+                  .replace(/[\r\n\t]+/g, ' ')
+                  .replace(/"/g, '&quot;')
+                  .toLowerCase();
+
+                const cleanTitle = (art.title || '').replace(/"/g, '&quot;').toLowerCase();
+                const safeId = (art.id || '').replace(/'/g, "\\'");
+
+                return `
+                  <button onclick="viewArticle('${safeId}')" data-title="${cleanTitle}" data-content="${cleanContent}" class="article-item">
+                    📄 ${art.title}
+                  </button>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        `;
+      }
+      listContainer.innerHTML = html;
+    }
+
+    function toggleFolder(folderId) {
+      const folder = document.getElementById(folderId);
+      const icon = document.getElementById(folderId + '_icon');
+      if (folder.classList.contains('hidden')) {
+        folder.classList.remove('hidden');
+        icon.innerText = icon.innerText.replace('▶', '▼');
+      } else {
+        folder.classList.add('hidden');
+        icon.innerText = icon.innerText.replace('▼', '▶');
+      }
+    }
+
+    function viewArticle(id) {
+      const art = allArticles.find(a => a.id === id);
+      if(!art) return;
+      
+      currentArticleId = id;
+      document.getElementById('viewCategory').innerText = art.category || 'GENERAL';
+      document.getElementById('viewTitle').innerText = art.title;
+      document.getElementById('viewContent').innerHTML = art.content || '';
+      
+      document.getElementById('editBtn').classList.remove('hidden');
+      document.getElementById('viewPanel').classList.remove('hidden');
+      document.getElementById('editPanel').classList.add('hidden');
+    }
+
+    function filterArticles() {
+      const query = document.getElementById('searchBar').value.toLowerCase().trim();
+      const items = document.querySelectorAll('.article-item');
+      
+      items.forEach(item => {
+        const titleText = item.getAttribute('data-title') || '';
+        const contentText = item.getAttribute('data-content') || '';
+        const matches = titleText.includes(query) || contentText.includes(query);
+        item.style.display = matches ? 'block' : 'none';
+      });
+    }
+
+    function showEditor() {
+      document.getElementById('editId').value = '';
+      document.getElementById('editTitle').value = '';
+      document.getElementById('editCategory').value = '';
+      document.getElementById('editContent').innerHTML = '';
+      
+      document.getElementById('viewPanel').classList.add('hidden');
+      document.getElementById('editPanel').classList.remove('hidden');
+    }
+
+    function editCurrentArticle() {
+      const art = allArticles.find(a => a.id === currentArticleId);
+      if(!art) return;
+      
+      document.getElementById('editId').value = art.id;
+      document.getElementById('editTitle').value = art.title;
+      document.getElementById('editCategory').value = art.category;
+      document.getElementById('editContent').innerHTML = art.content || '';
+      
+      document.getElementById('viewPanel').classList.add('hidden');
+      document.getElementById('editPanel').classList.remove('hidden');
+    }
+
+    function cancelEdit() {
+      document.getElementById('editPanel').classList.add('hidden');
+      document.getElementById('viewPanel').classList.remove('hidden');
+    }
+
+    function submitArticle() {
+      const id = document.getElementById('editId').value;
+      const title = document.getElementById('editTitle').value.trim();
+      const category = document.getElementById('editCategory').value.trim();
+      const content = document.getElementById('editContent').innerHTML.trim();
+
+      if (!title || !content) {
+        alert('Please provide a valid Title and Content block.');
+        return;
+      }
+
+      google.script.run.withSuccessHandler(function(response) {
+        if(response.success) {
+          showToast(response.message);
+          
+          // Determine generated or existing ID
+          const activeId = id || response.generatedId || ('art_' + new Date().getTime());
+          currentArticleId = activeId;
+
+          // Update local memory list instantly without full page reloads
+          const existingIndex = allArticles.findIndex(a => a.id === activeId);
+          if (existingIndex > -1) {
+            allArticles[existingIndex] = { id: activeId, title, category, content };
+          } else {
+            allArticles.push({ id: activeId, title, category, content });
+          }
+
+          // Re-render sidebar folders instantly
+          renderSidebar(allArticles);
+
+          // Display content directly on the Read View
+          document.getElementById('viewTitle').innerText = title;
+          document.getElementById('viewCategory').innerText = category || 'GENERAL';
+          document.getElementById('viewContent').innerHTML = content;
+          
+          document.getElementById('editPanel').classList.add('hidden');
+          document.getElementById('viewPanel').classList.remove('hidden');
+          document.getElementById('editBtn').classList.remove('hidden');
+          
+          // Background sync from spreadsheet
+          loadWikiData();
+        } else {
+          alert(response.message);
+        }
+      }).saveArticle(id, title, category, content);
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg;
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('hidden'), 3500);
+    }
+  </script>
+</body>
+</html>
